@@ -129,25 +129,17 @@ class Trade:
 
     def get_current_cost(self):
         portion = self.unaccounted_buy_amount/self.buy_amount
+        raw_cost = self.sell_value_gbp
         if self.fee is not None:
-            raw_cost = self.sell_value_gbp + self.fee.fee_value_gbp_at_trade
-        else:
-            raw_cost = self.sell_value_gbp
-
-        cost = portion * raw_cost
-
-        return cost
+            raw_cost += self.fee.fee_value_gbp_at_trade
+        return portion * raw_cost
 
     def get_current_disposal_value(self):
         portion = self.unaccounted_sell_amount/self.sell_amount
+        raw_cost = self.buy_value_gbp
         if self.fee is not None:
-            raw_cost = self.buy_value_gbp + self.fee.fee_value_gbp_at_trade
-        else:
-            raw_cost = self.buy_value_gbp
-
-        cost = portion * raw_cost
-
-        return cost
+            raw_cost += self.fee.fee_value_gbp_at_trade
+        return portion * raw_cost
 
     def is_viable_sell(self):
         return self.unaccounted_sell_amount > 0 and self.sell_currency != NATIVE_CURRENCY and self.sell_currency != ""
