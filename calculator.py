@@ -1,21 +1,3 @@
-#   Overview
-#
-# read in history from csv
-# convert into some internal data structre of trades
-#
-# go through all trades (in datetime order) where sell currency is not base fiat currency (GBP or EUR)
-#
-#    work out profit on that trade
-#       determine whether to use FIFO or average
-#
-#
-#
-# add up profits
-#
-# work out final taxable amount
-#
-# output results
-#
 
 # Assumptions
 #   * All dates are UTC
@@ -29,7 +11,6 @@
 #   * A BnB check with edge cases (29 days, 30 days, 31 days)
 
 # TODO: work out for Gift/Tips
-# TODO: work out other currencies
 # TODO: calculate samples by hand to compare
 # TODO: compare methods here with strategy in README and update/note differences
 # TODO: check tax strategy
@@ -39,7 +20,6 @@ import csv
 import logging
 from datetime import datetime, timedelta
 from enum import IntEnum, Enum
-
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
@@ -93,14 +73,14 @@ TAX_YEAR = 2020
 
 class Trade:
 
-    def __init__(self, buy_amount, buy_currency, buy_value_gbp, sell_amount, sell_currency, sell_value_gbp, date,
+    def __init__(self, buy_amount, buy_currency, buy_native_value, sell_amount, sell_currency, sell_native_value, date,
                  exchange):
         self.buy_amount = buy_amount
         self.buy_currency = buy_currency
-        self.buy_value_gbp = buy_value_gbp
+        self.buy_native_value = buy_native_value
         self.sell_amount = sell_amount
         self.sell_currency = sell_currency
-        self.sell_value_gbp = sell_value_gbp
+        self.sell_native_value = sell_native_value
         self.date = date
         self.exchange = exchange
         self.fee = None  # Set later from fee datafile
@@ -108,8 +88,8 @@ class Trade:
         self.native_value_per_coin = 0
         self.native_cost_per_coin = 0
         if self.buy_amount != 0:
-            self.native_cost_per_coin = self.sell_value_gbp / self.buy_amount
-            self.native_value_per_coin = self.buy_value_gbp / self.buy_amount
+            self.native_cost_per_coin = self.sell_native_value / self.buy_amount
+            self.native_value_per_coin = self.buy_native_value / self.buy_amount
 
         self.unaccounted_buy_amount = self.buy_amount
         self.unaccounted_sell_amount = self.sell_amount
@@ -125,34 +105,40 @@ class Trade:
                      datetime.strptime(row[TradeColumn.DATE], DATE_FORMAT),
                      row[TradeColumn.EXCHANGE])
 
-    def get_current_cost(self):
+    def get_native_fee_cost(self):
+        if self.fee is None:
+            return 0
+        else:
+            return self.fee.fee_native_value_at_trade
+
+    def get_unaccounted_cost(self):
         portion = self.unaccounted_buy_amount / self.buy_amount
-        raw_cost = self.sell_value_gbp
-        if self.fee is not None:
-            raw_cost += self.fee.fee_value_gbp_at_trade
+        raw_cost = self.sell_native_value + self.get_native_fee_cost()
         return portion * raw_cost
 
     def get_current_disposal_value(self):
         portion = self.unaccounted_sell_amount / self.sell_amount
-        raw_cost = self.buy_value_gbp
+        raw_cost = self.buy_native_value
         return portion * raw_cost
 
     def is_viable_sell(self):
         return self.unaccounted_sell_amount > 0 and self.sell_currency != NATIVE_CURRENCY and self.sell_currency != ""
 
     def __repr__(self):
-        return f"<Trade {self.date} :: {self.buy_amount} {self.buy_currency} ({self.buy_value_gbp} GBP) <- " \
-               f"{self.sell_amount} {self.sell_currency} ({self.sell_value_gbp} GBP)>"
+        return f"<Trade {self.date} ({self.exchange}) :: " \
+               f"{self.buy_amount} {self.buy_currency} ({self.buy_native_value} GBP) <- " \
+               f"{self.sell_amount} {self.sell_currency} ({self.sell_native_value} GBP) " \
+               f"{self.fee}>"
 
 
 class Fee:
 
-    def __init__(self, fee_amount, fee_currency, fee_value_gbp_at_trade, fee_value_gbp_now, trade_buy_amount,
+    def __init__(self, fee_amount, fee_currency, fee_native_value_at_trade, fee_native_value_now, trade_buy_amount,
                  trade_buy_currency, trade_sell_amount, trade_sell_currency, date, exchange):
         self.fee_amount = fee_amount
         self.fee_currency = fee_currency
-        self.fee_value_gbp_at_trade = fee_value_gbp_at_trade
-        self.fee_value_gbp_now = fee_value_gbp_now
+        self.fee_native_value_at_trade = fee_native_value_at_trade
+        self.fee_native_value_now = fee_native_value_now
         self.trade_buy_amount = trade_buy_amount
         self.trade_buy_currency = trade_buy_currency
         self.trade_sell_amount = trade_sell_amount
@@ -182,29 +168,26 @@ class Fee:
 class Gain:
 
     def __init__(self, gain_type: GainType, disposal_amount, disposal: Trade,
-                 corresponding_buy: Optional[Trade], average_cost=None):
+                 corresponding_buy: Optional[Trade], cost=None):
 
         self.gain_type = gain_type
         self.currency = disposal.sell_currency
         self.date_sold = disposal.date
 
         self.sold_location = disposal.exchange
-        self.corresponding_buy = None
-        if corresponding_buy:
-            self.corresponding_buy = corresponding_buy
-            self.cost_basis = corresponding_buy.native_cost_per_coin * disposal_amount
-        else:
-            self.cost_basis = average_cost * disposal_amount
         self.disposal_trade = disposal
         self.disposal_amount_accounted = disposal_amount
+        self.corresponding_buy = corresponding_buy
 
-        # NOTE: profit uses disposal.buy_value_gbp, not disposal.sell_value_gbp
-        self.proceeds = disposal.buy_value_gbp * disposal_amount
+        if self.corresponding_buy:
+            self.cost_basis = corresponding_buy.native_cost_per_coin * disposal_amount
+        else:
+            self.cost_basis = cost
+
+        # NOTE: profit uses disposal.buy_native_value, not disposal.sell_native_value
+        self.proceeds = disposal.buy_native_value * disposal_amount / disposal.unaccounted_sell_amount
         self.native_currency_gain_value = self.proceeds - self.cost_basis  # gain doesn't account for fees
-
-        self.fee_value_gbp = 0
-        if disposal.fee:
-            self.fee_value_gbp = disposal.fee.fee_value_gbp_at_trade
+        self.fee_native_value = disposal.get_native_fee_cost()
 
     def __str__(self):
         return f"Amount: {self.disposal_amount_accounted} Currency: {self.currency}" + " Date Acquired: " + str(
@@ -212,7 +195,7 @@ class Gain:
             self.date_sold.strftime("%d.%m.%Y %H:%M")) + " Location of buy: " + str(
             self.bought_location) + " Location of sell: " + str(self.sold_location) + " Proceeds in GBP: " + str(
             self.proceeds) + " Cost Basis in GBP: " + str(self.cost_basis) + " Fee in GBP: " + str(
-            self.fee) + " Gain/Loss in GBP: " + str(self.native_currency_gain_value)
+            self.fee_native_value) + " Gain/Loss in GBP: " + str(self.native_currency_gain_value)
 
     def __repr__(self):
         return str(self)
@@ -316,42 +299,42 @@ def calculate_fifo_gains(trade_list, trade_within_date_range):
 
 def calculate_104_gains_for_asset(currency, trade_list: List[Trade]):
     number_of_shares_in_pool = 0
-    pool_of_actual_cost = 0
-    # 104 holdings is calculated for each non-fiat currency.
+    total_pool_cost = 0
     gain_list = []
 
     for trade in trade_list:
-        # TODO: this assumes trades have been updated while doing FIFO
         if trade.buy_currency == currency:
-            number_of_shares_in_pool += trade.buy_amount
-            pool_of_actual_cost += trade.get_current_cost()
+            number_of_shares_in_pool += trade.unaccounted_buy_amount
+            total_pool_cost += trade.get_unaccounted_cost()
             trade.unaccounted_buy_amount = 0
 
         if trade.sell_currency == currency:
-            number_of_shares_to_sell = trade.unaccounted_sell_amount
-            unaccounted_for_amount = 0
-            if number_of_shares_to_sell > number_of_shares_in_pool:
-                unaccounted_for_amount = number_of_shares_to_sell - number_of_shares_in_pool
-                number_of_shares_to_sell = number_of_shares_in_pool
+            number_of_shares_to_sell = min(trade.unaccounted_sell_amount, number_of_shares_in_pool)
 
-            cost = (pool_of_actual_cost * number_of_shares_to_sell) / number_of_shares_in_pool
-            proceeds = trade.buy_value_gbp * (
-                        number_of_shares_to_sell / trade.sell_amount)  # Note this doesn't use get_current_disposal_value as number_shares_to_sell may not equal unaccounted sell amount
-            gain = Gain(GainType.AVERAGE, number_of_shares_to_sell, proceeds, cost, trade)
-            gain_list.append(gain)
-            # then update holding
-            number_of_shares_in_pool -= number_of_shares_to_sell
-            pool_of_actual_cost -= cost
+            if number_of_shares_in_pool > 0:
+                cost = total_pool_cost * number_of_shares_to_sell / number_of_shares_in_pool
+                gain = Gain(GainType.AVERAGE, number_of_shares_to_sell, trade, None, cost)
+                gain_list.append(gain)
 
-            trade.unaccounted_sell_amount = unaccounted_for_amount
+                number_of_shares_in_pool -= number_of_shares_to_sell
+                total_pool_cost -= cost
+                trade.unaccounted_sell_amount -= number_of_shares_to_sell
 
-            if unaccounted_for_amount > 0:
-                # Do future FIFO
+            if trade.unaccounted_sell_amount > 0:
                 # TODO: Where disposal is not fully accounted for, need to do FIFO on later trades(after all 104 holdings have been done)
                 #   see https://bettingbitcoin.io/cryptocurrency-uk-tax-treatments
-                raise ValueError
+                logger.debug(f"Not all accounted for with trade {trade}. Checking subsequent buys.")
+                calculate_future_fifo(trade)
+
+            if trade.unaccounted_sell_amount > 0:
+                logger.warning(f"Could not account for all of trade {trade}. Treating it as a gift.")
+                # raise ValueError
 
     return gain_list
+
+
+def calculate_future_fifo(trade):
+    pass
 
 
 def calculate_104_holding_gains(trade_list):
