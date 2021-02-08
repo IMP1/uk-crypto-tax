@@ -154,6 +154,7 @@ class Fee:
         self.date = date
         self.exchange = exchange
 
+
     @staticmethod
     def from_csv(row):
         return Fee(float(row[FeeColumn.FEE_AMOUNT]),
@@ -170,35 +171,6 @@ class Fee:
     def __str__(self):
         return "buy_amount: " + str(self.buy_amount) + " Buy Currency: " + str(self.buy_currency) + " Date : " + str(
             self.date.strftime("%d.%m.%Y %H:%M"))
-
-
-class Fee:
-
-    def __init__(self, fee_amount, fee_currency, fee_value_gbp_at_trade, fee_value_gbp_now, trade_buy_amount,
-                 trade_buy_currency, trade_sell_amount, trade_sell_currency, date, exchange):
-        self.fee_amount = fee_amount
-        self.fee_currency = fee_currency
-        self.fee_value_gbp_at_trade = fee_value_gbp_at_trade
-        self.fee_value_gbp_now = fee_value_gbp_now
-        self.trade_buy_amount = trade_buy_amount
-        self.trade_buy_currency = trade_buy_currency
-        self.trade_sell_amount = trade_sell_amount
-        self.trade_sell_currency = trade_sell_currency
-        self.date = date
-        self.exchange = exchange
-
-    @staticmethod
-    def from_csv(row):
-        return Fee(float(row[FeeColumn.FEE_AMOUNT]),
-                   row[FeeColumn.FEE_CURRENCY],
-                   float(row[FeeColumn.FEE_VALUE_GBP_THEN]),
-                   float(row[FeeColumn.FEE_VALUE_GBP_NOW]),
-                   float(row[FeeColumn.TRADE_BUY_AMOUNT]),
-                   row[FeeColumn.TRADE_BUY_CURRENCY],
-                   float(row[FeeColumn.TRADE_SELL_AMOUNT]),
-                   row[FeeColumn.TRADE_SELL_CURRENCY],
-                   row[FeeColumn.DATE],
-                   row[FeeColumn.EXCHANGE])
 
 
 class Gain:
@@ -304,18 +276,13 @@ def currency_match(disposal, corresponding_buy):
 
 
 def gain_from_pair(disposal, corresponding_buy):
-    uncapped_amount = corresponding_buy.unaccounted_buy_amount / disposal.unaccounted_sell_amount
     disposal_amount_accounted_for = min(1, corresponding_buy.unaccounted_buy_amount / disposal.unaccounted_sell_amount)
-    logger.debug(f"Matched {disposal_amount_accounted_for * 100}% of \n\t{disposal} with \n\t{corresponding_buy}.")
     gain = Gain(GainType.FIFO, disposal_amount_accounted_for, disposal, corresponding_buy)
+    logger.debug(f"Matched {disposal_amount_accounted_for * 100}% of \n\t{disposal} with \n\t{corresponding_buy}.")
+
     disposal.unaccounted_sell_amount -= disposal_amount_accounted_for * disposal.unaccounted_sell_amount
     corresponding_buy.unaccounted_buy_amount -= disposal_amount_accounted_for * corresponding_buy.unaccounted_buy_amount
     return gain
-
-
-def currency_match(disposal, corresponding_buy):
-    # Matches if proceeds from trade come from buy_trade
-    return disposal.sell_currency == corresponding_buy.buy_currency and corresponding_buy.buy_amount > 0
 
 
 def calculate_day_gains_fifo(trade_list):
@@ -333,11 +300,11 @@ def calculate_bnb_gains_fifo(trade_list):
 def calculate_fifo_gains(trade_list, trade_within_date_range):
     gains = []
     for disposal in trade_list:
-        if disposal.is_viable_sell():
-            for corresponding_buy in trade_list:
-                if currency_match(disposal, corresponding_buy) and trade_within_date_range(disposal, corresponding_buy) and disposal.is_viable_sell():
-                    calculated_gain = gain_from_pair(disposal, corresponding_buy)
-                    gains.append(calculated_gain)
+        for corresponding_buy in trade_list:
+            if currency_match(disposal, corresponding_buy) and disposal.is_viable_sell() and \
+               trade_within_date_range(disposal, corresponding_buy):
+                calculated_gain = gain_from_pair(disposal, corresponding_buy)
+                gains.append(calculated_gain)
     return gains
 
 
