@@ -308,21 +308,21 @@ def calculate_fifo_gains(trade_list, trade_within_date_range):
     return gains
 
 
-def calculate_104_gains_for_asset(taxyear, asset, trade_list: List[Trade]):
+def calculate_104_gains_for_asset(currency, trade_list: List[Trade]):
     buy_trades_in_pool = []
     number_of_shares_in_pool = 0
     pool_of_actual_cost = 0
-    # 104 holdings is calculated for each non-fiat asset.
+    # 104 holdings is calculated for each non-fiat currency.
     gain_list = []
 
     for trade in trade_list:
         # TODO: this assumes trades have been updated while doing FIFO
-        if trade.buy_currency == asset:
+        if trade.buy_currency == currency:
             number_of_shares_in_pool += trade.buy_amount
             pool_of_actual_cost += trade.sell_value_gbp + trade.fee_value_gbp # TODO: cost should include fees?
             buy_trades_in_pool.append(trade)
 
-        if trade.sell_currency == asset:
+        if trade.sell_currency == currency:
 
             number_of_shares_sold = trade.sell_amount
             unaccounted_for_amount = 0
@@ -333,8 +333,7 @@ def calculate_104_gains_for_asset(taxyear, asset, trade_list: List[Trade]):
             cost = (pool_of_actual_cost * number_of_shares_sold) / number_of_shares_in_pool
             proceeds = trade.buy_value_gbp * (number_of_shares_sold / trade.sell_amount)
             gain = Gain(GainType.AVERAGE, number_of_shares_sold, proceeds, cost, trade)
-            if within_tax_year(trade, taxyear):
-                gain_list.append(gain)
+            gain_list.append(gain)
             # then update holding
             number_of_shares_in_pool -= number_of_shares_sold
             pool_of_actual_cost -= cost
@@ -350,18 +349,18 @@ def calculate_104_gains_for_asset(taxyear, asset, trade_list: List[Trade]):
     return gain_list
 
 
-
-def calculate_future_fifo_gains(trade_list):
-    return []
-    # TODO: Go through future trades
-
+def calculate_104_holding_gains(trade_list):
+    currency_list = set([trade.sell_currency for trade in trade_list])
+    gain_list = []
+    for currency in currency_list:
+        gain_list.extend(calculate_104_gains_for_asset(currency, trade_list))
+    return gain_list
 
 def calculate_capital_gain(trade_list: List[Trade]):
     gains = []
     gains.extend(calculate_day_gains_fifo(trade_list))
     gains.extend(calculate_bnb_gains_fifo(trade_list))
     gains.extend(calculate_104_holding_gains(trade_list))
-    gains.extend(calculate_future_fifo_gains(trade_list))
     return gains
 
 
