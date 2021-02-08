@@ -103,8 +103,7 @@ class Trade:
         self.sell_value_gbp = sell_value_gbp
         self.date = date
         self.exchange = exchange
-        self.fee = None # Set later from fee datafile
-
+        self.fee = None  # Set later from fee datafile
 
         self.native_value_per_coin = 0
         self.native_cost_per_coin = 0
@@ -114,7 +113,6 @@ class Trade:
 
         self.unaccounted_buy_amount = self.buy_amount
         self.unaccounted_sell_amount = self.sell_amount
-
 
     @staticmethod
     def from_csv(row):
@@ -128,17 +126,15 @@ class Trade:
                      row[TradeColumn.EXCHANGE])
 
     def get_current_cost(self):
-        portion = self.unaccounted_buy_amount/self.buy_amount
+        portion = self.unaccounted_buy_amount / self.buy_amount
         raw_cost = self.sell_value_gbp
         if self.fee is not None:
             raw_cost += self.fee.fee_value_gbp_at_trade
         return portion * raw_cost
 
     def get_current_disposal_value(self):
-        portion = self.unaccounted_sell_amount/self.sell_amount
+        portion = self.unaccounted_sell_amount / self.sell_amount
         raw_cost = self.buy_value_gbp
-        if self.fee is not None:
-            raw_cost += self.fee.fee_value_gbp_at_trade
         return portion * raw_cost
 
     def is_viable_sell(self):
@@ -151,7 +147,7 @@ class Trade:
 
 class Fee:
 
-    def __init__(self, fee_amount, fee_currency, fee_value_gbp_at_trade, fee_value_gbp_now, trade_buy_amount, 
+    def __init__(self, fee_amount, fee_currency, fee_value_gbp_at_trade, fee_value_gbp_now, trade_buy_amount,
                  trade_buy_currency, trade_sell_amount, trade_sell_currency, date, exchange):
         self.fee_amount = fee_amount
         self.fee_currency = fee_currency
@@ -185,8 +181,8 @@ class Fee:
 
 class Gain:
 
-    def __init__(self, gain_type: GainType, disposal_amount, disposal: Trade, 
-                 corresponding_buy: Optional[Trade], average_cost = None):
+    def __init__(self, gain_type: GainType, disposal_amount, disposal: Trade,
+                 corresponding_buy: Optional[Trade], average_cost=None):
 
         self.gain_type = gain_type
         self.currency = disposal.sell_currency
@@ -319,7 +315,6 @@ def calculate_fifo_gains(trade_list, trade_within_date_range):
 
 
 def calculate_104_gains_for_asset(currency, trade_list: List[Trade]):
-    buy_trades_in_pool = []
     number_of_shares_in_pool = 0
     pool_of_actual_cost = 0
     # 104 holdings is calculated for each non-fiat currency.
@@ -329,23 +324,23 @@ def calculate_104_gains_for_asset(currency, trade_list: List[Trade]):
         # TODO: this assumes trades have been updated while doing FIFO
         if trade.buy_currency == currency:
             number_of_shares_in_pool += trade.buy_amount
-            pool_of_actual_cost += trade.sell_value_gbp + trade.fee_value_gbp # TODO: cost should include fees?
-            buy_trades_in_pool.append(trade)
+            pool_of_actual_cost += trade.get_current_cost()
+            trade.unaccounted_buy_amount = 0
 
         if trade.sell_currency == currency:
-
-            number_of_shares_sold = trade.sell_amount
+            number_of_shares_to_sell = trade.unaccounted_sell_amount
             unaccounted_for_amount = 0
-            if number_of_shares_sold > number_of_shares_in_pool:
-                unaccounted_for_amount = number_of_shares_sold - number_of_shares_in_pool
-                number_of_shares_sold = number_of_shares_in_pool
+            if number_of_shares_to_sell > number_of_shares_in_pool:
+                unaccounted_for_amount = number_of_shares_to_sell - number_of_shares_in_pool
+                number_of_shares_to_sell = number_of_shares_in_pool
 
-            cost = (pool_of_actual_cost * number_of_shares_sold) / number_of_shares_in_pool
-            proceeds = trade.buy_value_gbp * (number_of_shares_sold / trade.sell_amount)
-            gain = Gain(GainType.AVERAGE, number_of_shares_sold, proceeds, cost, trade)
+            cost = (pool_of_actual_cost * number_of_shares_to_sell) / number_of_shares_in_pool
+            proceeds = trade.buy_value_gbp * (
+                        number_of_shares_to_sell / trade.sell_amount)  # Note this doesn't use get_current_disposal_value as number_shares_to_sell may not equal unaccounted sell amount
+            gain = Gain(GainType.AVERAGE, number_of_shares_to_sell, proceeds, cost, trade)
             gain_list.append(gain)
             # then update holding
-            number_of_shares_in_pool -= number_of_shares_sold
+            number_of_shares_in_pool -= number_of_shares_to_sell
             pool_of_actual_cost -= cost
 
             trade.unaccounted_sell_amount = unaccounted_for_amount
@@ -365,6 +360,7 @@ def calculate_104_holding_gains(trade_list):
     for currency in currency_list:
         gain_list.extend(calculate_104_gains_for_asset(currency, trade_list))
     return gain_list
+
 
 def calculate_capital_gain(trade_list: List[Trade]):
     gains = []
